@@ -10,6 +10,43 @@
   <main>
     <h1>WATjobs</h1>
     <p>WaterlooWorks co-op search helper</p>
+    <section aria-labelledby="preferences-heading">
+      <h2 id="preferences-heading">Job Preferences</h2>
+      <form>
+        <p>
+          <label for="term">Work term (required)</label>
+          <select id="term" name="term" required>
+            <option value="">Choose a work term</option>
+            <option value="2027 - Winter">Winter 2027</option>
+            <option value="2027 - Spring">Spring 2027</option>
+            <option value="2027 - Fall">Fall 2027</option>
+          </select>
+        </p>
+        <p>
+          <label for="duration">Duration (required)</label>
+          <select id="duration" name="duration" required>
+            <option value="">Choose a duration</option>
+            <option>4 months</option>
+            <option>8 months</option>
+          </select>
+        </p>
+        <p><label for="program">Program</label> <input id="program" name="program" maxlength="450"></p>
+        <p><label for="roles">Job title</label> <input id="roles" name="roles" maxlength="450"></p>
+        <p><label for="location">City</label> <input id="location" name="location" maxlength="450"></p>
+        <p>
+          <label for="level">Job level</label>
+          <select id="level" name="level">
+            <option value="">Any level</option>
+            <option>Junior</option>
+            <option>Intermediate</option>
+            <option>Senior</option>
+          </select>
+        </p>
+        <p><label for="skills">Skills</label> <textarea id="skills" name="skills" maxlength="450" rows="2"></textarea></p>
+        <button type="submit" disabled>Find matches</button>
+        <p>Live search will be available after WaterlooWorks is connected.</p>
+      </form>
+    </section>
   </main>
 </body>
 </html>
