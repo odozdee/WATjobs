@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 const pages = new Map([
   ['/', ['index.html', 'text/html']],
   ['/style.css', ['style.css', 'text/css']],
+  ['/app.js', ['app.js', 'text/javascript']],
 ]);
 
 export const server = createServer(async (request, response) => {
