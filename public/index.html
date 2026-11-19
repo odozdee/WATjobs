@@ -17,6 +17,19 @@
   <main>
     <h1>WATjobs</h1>
     <p>WaterlooWorks co-op search helper</p>
+    <div class="source">
+      <div><strong>WaterlooWorks</strong><p id="source-note" role="status">Checking live search availability…</p></div>
+      <button class="secondary" type="button" id="connect" disabled>Connect</button>
+    </div>
+    <section id="session" aria-labelledby="session-title" hidden>
+      <div class="session-header">
+        <div>
+          <h2 id="session-title" tabindex="-1">WaterlooWorks live browser</h2>
+          <p>Sign in and complete 2FA in the brower, then enter your job preferences</p>
+        </div>
+      </div>
+      <iframe id="viewer" title="Interactive Steel browser for WaterlooWorks" allow="autoplay; fullscreen" referrerpolicy="no-referrer"></iframe>
+    </section>
     <section aria-labelledby="preferences-heading">
       <h2 id="preferences-heading">Job Preferences</h2>
       <form>

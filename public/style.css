@@ -101,3 +101,37 @@ button {
 button:disabled {
   opacity: 0.65;
 }
+
+.source {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: #fff8df;
+}
+
+.source p {
+  margin-bottom: 0;
+}
+
+#session {
+  margin-bottom: 1rem;
+  padding: 0;
+  overflow: hidden;
+}
+
+.session-header {
+  padding: 1rem;
+}
+
+#viewer {
+  display: block;
+  width: 100%;
+  height: clamp(360px, 65vw, 680px);
+  border: 0;
+  border-top: 1px solid var(--border);
+}

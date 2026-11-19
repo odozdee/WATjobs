@@ -37,3 +37,40 @@ form.addEventListener('submit', async event => {
     button.disabled = false;
   }
 });
+
+const connect = document.getElementById('connect');
+const connectionStatus = document.getElementById('source-note');
+const viewer = document.getElementById('viewer');
+
+fetch('/api/config').then(async response => {
+  const config = await response.json();
+  connect.disabled = !config.liveReady;
+  connectionStatus.textContent = config.liveReady
+    ? 'Sign in through Steel to search WaterlooWorks.'
+    : 'Set up Steel to enable WaterlooWorks search.';
+}).catch(() => {
+  connectionStatus.textContent = 'Could not check live search availability.';
+});
+
+connect.addEventListener('click', async () => {
+  connect.disabled = true;
+  connectionStatus.textContent = 'Starting Steel browser…';
+  try {
+    const response = await fetch('/api/connect', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    const session = await response.json();
+    if (!response.ok) {
+      throw new Error(session.error);
+    }
+    viewer.src = session.viewer;
+    document.getElementById('session').hidden = false;
+    connectionStatus.textContent = 'Steel browser ready.';
+    document.getElementById('session-title').focus();
+  } catch (error) {
+    connectionStatus.textContent = error.message;
+    connect.disabled = false;
+  }
+});

@@ -33,9 +33,33 @@ async function connect() {
     dimensions: { width: 1280, height: 800 },
     debugConfig: { interactive: true },
   });
+  const { chromium } = await import('playwright-core');
+  try {
+    const endpoint = new URL('wss://connect.steel.dev');
+    endpoint.searchParams.set('apiKey', steelKey);
+    endpoint.searchParams.set('sessionId', session.id);
+    const browser = await chromium.connectOverCDP(endpoint.href, { timeout: 15000 });
+    try {
+      const context = browser.contexts()[0];
+      const page = context.pages()[0] || await context.newPage();
+      await page.goto('https://waterlooworks.uwaterloo.ca', {
+        waitUntil: 'domcontentloaded',
+        timeout: 15000,
+      });
+    } finally {
+      await browser.close();
+    }
+  } catch {
+    await steel('/' + encodeURIComponent(session.id) + '/release', {}).catch(() => {});
+    throw new Error('Could not open a WaterlooWorks browser session.');
+  }
+  const viewer = new URL(session.debugUrl || session.sessionViewerUrl);
+  if (viewer.protocol !== 'https:' || !viewer.hostname.endsWith('.steel.dev')) {
+    throw new Error('Steel returned an unexpected viewer address.');
+  }
   return {
     id: session.id,
-    viewer: session.debugUrl || session.sessionViewerUrl,
+    viewer: viewer.href,
   };
 }
 
