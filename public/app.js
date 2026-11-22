@@ -24,7 +24,10 @@ form.addEventListener('submit', async event => {
     const response = await fetch('/api/preferences', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(Object.fromEntries(new FormData(form))),
+      body: JSON.stringify({
+        ...Object.fromEntries(new FormData(form)),
+        board: document.getElementById('board').value,
+      }),
     });
     const result = await response.json();
     if (!response.ok) {
