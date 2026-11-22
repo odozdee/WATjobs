@@ -1,3 +1,4 @@
+import { origin, readBoard } from './waterlooworks.mjs';
 import { profileFrom } from './search.mjs';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -57,26 +58,22 @@ async function connect() {
     endpoint.searchParams.set('apiKey', steelKey);
     endpoint.searchParams.set('sessionId', session.id);
     const browser = await chromium.connectOverCDP(endpoint.href, { timeout: 15000 });
-    try {
-      const context = browser.contexts()[0];
-      const page = context.pages()[0] || await context.newPage();
-      await page.goto('https://waterlooworks.uwaterloo.ca', {
-        waitUntil: 'domcontentloaded',
-        timeout: 15000,
-      });
-      const viewer = new URL(session.debugUrl || session.sessionViewerUrl);
-      if (viewer.protocol !== 'https:' || !viewer.hostname.endsWith('.steel.dev')) {
-        throw new Error('Steel returned an unexpected viewer address.');
-      }
-      sessions.set(token, { id: session.id, timer, context });
-      return {
-        id: session.id,
-        token,
-        viewer: viewer.href,
-      };
-    } finally {
-      await browser.close();
+    const context = browser.contexts()[0];
+    const page = context.pages()[0] || await context.newPage();
+    await page.goto(origin, {
+      waitUntil: 'domcontentloaded',
+      timeout: 15000,
+    });
+    const viewer = new URL(session.debugUrl || session.sessionViewerUrl);
+    if (viewer.protocol !== 'https:' || !viewer.hostname.endsWith('.steel.dev')) {
+      throw new Error('Steel returned an unexpected viewer address.');
     }
+    sessions.set(token, { id: session.id, timer, context });
+    return {
+      id: session.id,
+      token,
+      viewer: viewer.href,
+    };
   } catch {
     await release(token).catch(() => {});
     throw new Error('Could not open a WaterlooWorks browser session.');
@@ -140,6 +137,40 @@ export const server = createServer(async (request, response) => {
       response.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({
         error: 'Could not release the Steel session.',
       }));
+    }
+    return;
+  }
+  if (request.method === 'POST' && request.url === '/api/open-board') {
+    if (request.headers.origin !== 'http://127.0.0.1:' + server.address().port) {
+      response.writeHead(403).end('Open the local app first.');
+      return;
+    }
+    let session;
+    try {
+      let input = '';
+      for await (const chunk of request) {
+        input += chunk;
+        if (input.length > 8000) {
+          response.writeHead(413).end('Request is too large.');
+          return;
+        }
+      }
+      const body = JSON.parse(input);
+      session = sessions.get(body.token);
+      if (!session?.context || session.busy) {
+        throw new Error('Connect to Steel before opening a job board.');
+      }
+      session.busy = true;
+      const result = await readBoard(session.context, {}, body.board);
+      response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(result));
+    } catch (error) {
+      const message = /^(?:Enter |Open |Could |Connect )/.test(error.message)
+        ? error.message : 'Could not open the WaterlooWorks job board.';
+      response.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: message }));
+    } finally {
+      if (session) {
+        session.busy = false;
+      }
     }
     return;
   }
