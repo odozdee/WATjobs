@@ -1,12 +1,14 @@
 import { profileFrom } from './search.mjs';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import { randomUUID } from 'node:crypto';
 
 
 const steelKey = process.env.STEEL_API_KEY;
 const steelHeadless = process.env.STEEL_HEADLESS === '1';
 const liveReady = Boolean(steelKey);
 const sessionLifetime = 900000;
+const sessions = new Map();
 
 async function steel(path, body) {
   const response = await fetch('https://api.steel.dev/v1/sessions' + path, {
@@ -23,17 +25,33 @@ async function steel(path, body) {
   }
 }
 
+async function release(token) {
+  const session = sessions.get(token);
+  if (!session) {
+    return;
+  }
+  await steel('/' + encodeURIComponent(session.id) + '/release', {});
+  clearTimeout(session.timer);
+  sessions.delete(token);
+}
+
 async function connect() {
   if (!liveReady) {
     throw new Error('Live search needs a Steel API key.');
   }
+  const { chromium } = await import('playwright-core');
   const session = await steel('', {
     timeout: sessionLifetime,
     headless: steelHeadless,
     dimensions: { width: 1280, height: 800 },
     debugConfig: { interactive: true },
   });
-  const { chromium } = await import('playwright-core');
+  const token = randomUUID();
+  const timer = setTimeout(() => {
+    void release(token).catch(() => {});
+  }, sessionLifetime);
+  timer.unref();
+  sessions.set(token, { id: session.id, timer });
   try {
     const endpoint = new URL('wss://connect.steel.dev');
     endpoint.searchParams.set('apiKey', steelKey);
@@ -46,21 +64,23 @@ async function connect() {
         waitUntil: 'domcontentloaded',
         timeout: 15000,
       });
+      const viewer = new URL(session.debugUrl || session.sessionViewerUrl);
+      if (viewer.protocol !== 'https:' || !viewer.hostname.endsWith('.steel.dev')) {
+        throw new Error('Steel returned an unexpected viewer address.');
+      }
+      sessions.set(token, { id: session.id, timer, context });
+      return {
+        id: session.id,
+        token,
+        viewer: viewer.href,
+      };
     } finally {
       await browser.close();
     }
   } catch {
-    await steel('/' + encodeURIComponent(session.id) + '/release', {}).catch(() => {});
+    await release(token).catch(() => {});
     throw new Error('Could not open a WaterlooWorks browser session.');
   }
-  const viewer = new URL(session.debugUrl || session.sessionViewerUrl);
-  if (viewer.protocol !== 'https:' || !viewer.hostname.endsWith('.steel.dev')) {
-    throw new Error('Steel returned an unexpected viewer address.');
-  }
-  return {
-    id: session.id,
-    viewer: viewer.href,
-  };
 }
 
 const pages = new Map([
@@ -91,6 +111,34 @@ export const server = createServer(async (request, response) => {
     } catch {
       response.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({
         error: liveReady ? 'Could not create a Steel browser session.' : 'Live search needs a Steel API key.',
+      }));
+    }
+    return;
+  }
+  if (request.method === 'POST' && request.url === '/api/disconnect') {
+    if (request.headers.origin !== 'http://127.0.0.1:' + server.address().port) {
+      response.writeHead(403).end('Open the local app first.');
+      return;
+    }
+    try {
+      let input = '';
+      for await (const chunk of request) {
+        input += chunk;
+        if (input.length > 8000) {
+          response.writeHead(413).end('Request is too large.');
+          return;
+        }
+      }
+      const body = JSON.parse(input);
+      if (typeof body?.token !== 'string') {
+        response.writeHead(400).end('A session token is required.');
+        return;
+      }
+      await release(body.token);
+      response.writeHead(200, { 'content-type': 'application/json' }).end('{}');
+    } catch {
+      response.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({
+        error: 'Could not release the Steel session.',
       }));
     }
     return;
