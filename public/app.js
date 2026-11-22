@@ -41,6 +41,7 @@ form.addEventListener('submit', async event => {
 const connect = document.getElementById('connect');
 const connectionStatus = document.getElementById('source-note');
 const viewer = document.getElementById('viewer');
+let token;
 
 fetch('/api/config').then(async response => {
   const config = await response.json();
@@ -54,23 +55,34 @@ fetch('/api/config').then(async response => {
 
 connect.addEventListener('click', async () => {
   connect.disabled = true;
-  connectionStatus.textContent = 'Starting Steel browser…';
+  connectionStatus.textContent = token ? 'Closing Steel browser…' : 'Starting Steel browser…';
   try {
-    const response = await fetch('/api/connect', {
+    const response = await fetch(token ? '/api/disconnect' : '/api/connect', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ token }),
     });
     const session = await response.json();
     if (!response.ok) {
       throw new Error(session.error);
     }
-    viewer.src = session.viewer;
-    document.getElementById('session').hidden = false;
-    connectionStatus.textContent = 'Steel browser ready.';
-    document.getElementById('session-title').focus();
+    if (token) {
+      token = undefined;
+      viewer.removeAttribute('src');
+      document.getElementById('session').hidden = true;
+      connect.textContent = 'Connect';
+      connectionStatus.textContent = 'Steel browser closed.';
+    } else {
+      token = session.token;
+      viewer.src = session.viewer;
+      document.getElementById('session').hidden = false;
+      connect.textContent = 'Disconnect';
+      connectionStatus.textContent = 'Steel browser ready.';
+      document.getElementById('session-title').focus();
+    }
   } catch (error) {
     connectionStatus.textContent = error.message;
+  } finally {
     connect.disabled = false;
   }
 });
