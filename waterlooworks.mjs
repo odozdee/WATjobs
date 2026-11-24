@@ -4,6 +4,37 @@ const boards = new Map([
   ['full', '/myAccount/co-op/full/jobs.htm'],
 ]);
 
+const nextPageLabel = /^(?:go to\s+)?next(?:\s+page)?(?:\s+(?:chevron_right|navigate_next|keyboard_arrow_right|›|»))?$|^(?:chevron_right|navigate_next|keyboard_arrow_right|›|»|>)$/i;
+
+const previousPageLabel = /^(?:(?:go to\s+)?(?:previous|prev)(?:\s+page)?|chevron_left|navigate_before|keyboard_arrow_left|‹|«|<)$/i;
+
+async function advancePage(page, pageNumber, direction = 1) {
+  const label = direction === 1 ? nextPageLabel : previousPageLabel;
+  const controls = page.locator('button, a, [role="button"]');
+  const arrow = controls.filter({ hasText: label })
+    .or(page.getByRole('button', { name: label }))
+    .or(page.getByRole('link', { name: label }))
+    .or(page.locator(direction === 1
+      ? 'a[rel="next"], [title="Next Page" i], [title="Next" i]'
+      : 'a[rel="prev"], [title="Previous Page" i], [title="Previous" i]'))
+    .filter({ visible: true }).first();
+  const numbered = page.locator('[class*="pagin" i], [aria-label*="pagin" i]')
+    .locator('button, a, [role="button"]')
+    .filter({ hasText: new RegExp('^\\s*' + (pageNumber + direction) + '\\s*$') })
+    .filter({ visible: true }).first();
+  for (const control of [numbered, arrow]) {
+    if (!await control.isVisible() || !await control.isEnabled()) {
+      continue;
+    }
+    if (await control.evaluate(node => Boolean(node.closest('[disabled], [aria-disabled="true"], .disabled, .is--disabled')))) {
+      continue;
+    }
+    await control.click({ timeout: 6000 });
+    return true;
+  }
+  return false;
+}
+
 export async function readBoard(context, profile, board = 'direct') {
   const path = boards.get(board);
   if (!path) {
@@ -124,7 +155,46 @@ export async function readBoard(context, profile, board = 'direct') {
         };
       }));
     };
-    return { board, ready: true, jobs: await readEntries() };
+    const jobs = new Map();
+    const seenPages = new Set();
+    let pageNumber = 1;
+    let entries = await readEntries();
+    let interrupted;
+    const jobKey = entry => entry.jobId || JSON.stringify([entry.title, entry.company, entry.location]);
+    const pageKey = rows => JSON.stringify(rows.map(jobKey).sort());
+    while (entries.length) {
+      const current = pageKey(entries);
+      if (seenPages.has(current)) {
+        interrupted = 'WaterlooWorks repeated a results page.';
+        break;
+      }
+      seenPages.add(current);
+      for (const entry of entries) {
+        jobs.set(jobKey(entry), entry);
+      }
+      try {
+        if (!await advancePage(page, pageNumber)) {
+          break;
+        }
+        const deadline = Date.now() + 12000;
+        do {
+          entries = await readEntries();
+          if (entries.length && pageKey(entries) !== current) {
+            break;
+          }
+          await new Promise(resolve => setTimeout(resolve, 250));
+        } while (Date.now() < deadline);
+        if (!entries.length || pageKey(entries) === current) {
+          interrupted = 'WaterlooWorks did not load the next results page.';
+          break;
+        }
+        pageNumber++;
+      } catch {
+        interrupted = 'Could not finish scanning the results pages.';
+        break;
+      }
+    }
+    return { board, ready: true, jobs: [...jobs.values()], pagesChecked: seenPages.size, interrupted };
   } catch (error) {
     if (!signedInTab) {
       await page.close().catch(() => {});
