@@ -1,3 +1,4 @@
+import { filterJobs } from './search.mjs';
 export const origin = 'https://waterlooworks.uwaterloo.ca';
 const boards = new Map([
   ['direct', '/myAccount/co-op/direct/jobs.htm'],
@@ -194,7 +195,7 @@ export async function readBoard(context, profile, board = 'direct') {
         break;
       }
     }
-    return { board, ready: true, jobs: [...jobs.values()], pagesChecked: seenPages.size, interrupted };
+    return { board, ready: true, jobs: filterJobs([...jobs.values()], profile), pagesChecked: seenPages.size, interrupted };
   } catch (error) {
     if (!signedInTab) {
       await page.close().catch(() => {});
