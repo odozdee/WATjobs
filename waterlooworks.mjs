@@ -79,6 +79,20 @@ export async function readBoard(context, profile, board = 'direct') {
     await openFilteredBoard();
     const titleLinks = visibleTable.locator('tbody a.overflow--ellipsis');
     const readEntries = async () => {
+      await visibleTable.evaluate(async table => {
+        let moved = false;
+        for (let container = table.parentElement; container && container !== document.body; container = container.parentElement) {
+          const overflow = container.scrollWidth - container.clientWidth;
+          if (overflow < 2 || !/auto|scroll/.test(getComputedStyle(container).overflowX)) {
+            continue;
+          }
+          container.scrollLeft = getComputedStyle(container).direction === 'rtl' ? -overflow : overflow;
+          moved = true;
+        }
+        if (moved) {
+          await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        }
+      }, undefined, { timeout: 3000 });
       return titleLinks.evaluateAll(links => links.map((link, index) => {
         const row = link.closest('tr');
         const table = row.closest('table');
