@@ -1,5 +1,5 @@
 import { origin, readBoard } from './waterlooworks.mjs';
-import { profileFrom } from './search.mjs';
+import { profileFrom, rank } from './search.mjs';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
@@ -169,6 +169,58 @@ export const server = createServer(async (request, response) => {
       response.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: message }));
     } finally {
       if (session) {
+        session.busy = false;
+      }
+    }
+    return;
+  }
+  if (request.method === 'POST' && request.url === '/api/search') {
+    if (request.headers.origin !== 'http://127.0.0.1:' + server.address().port) {
+      response.writeHead(403).end('Open the local app first.');
+      return;
+    }
+    let session;
+    let ownsSearch = false;
+    try {
+      let input = '';
+      for await (const chunk of request) {
+        input += chunk;
+        if (input.length > 8000) {
+          response.writeHead(413).end('Request is too large.');
+          return;
+        }
+      }
+      const body = JSON.parse(input);
+      session = sessions.get(body.token);
+      if (!session?.context) {
+        throw new Error('Connect to a Steel browser and sign in to WaterlooWorks first.');
+      }
+      if (session.busy) {
+        response.writeHead(409, { 'content-type': 'application/json' }).end(JSON.stringify({
+          error: 'A search is already running in this browser session.',
+        }));
+        return;
+      }
+      const profile = profileFrom(body.profile);
+      session.busy = true;
+      ownsSearch = true;
+      const result = await readBoard(session.context, profile, body.board);
+      const ranked = rank(result.jobs, profile, true);
+      const keywordFallback = ranked.length === 0 && result.jobs.length > 0;
+      const all = rank(result.jobs, profile, true, { includeUnmatched: true });
+      const jobs = keywordFallback ? all : [...ranked, ...all.filter(job => !job.matched.length)];
+      await release(body.token).catch(() => {});
+      response.writeHead(200, {
+        'content-type': 'application/json',
+        'cache-control': 'no-store',
+      }).end(JSON.stringify({ ...result, jobs, keywordFallback }));
+    } catch (error) {
+      const message = error instanceof SyntaxError ? 'Invalid request data.'
+        : /^(?:Enter |Open |Could |Connect )/.test(error.message)
+          ? error.message : 'Could not complete the WaterlooWorks search.';
+      response.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: message }));
+    } finally {
+      if (ownsSearch) {
         session.busy = false;
       }
     }
