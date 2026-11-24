@@ -77,7 +77,40 @@ export async function readBoard(context, profile, board = 'direct') {
       });
     }
     await openFilteredBoard();
-    return { board, ready: true };
+    const titleLinks = visibleTable.locator('tbody a.overflow--ellipsis');
+    const readEntries = async () => {
+      return titleLinks.evaluateAll(links => links.map((link, index) => {
+        const row = link.closest('tr');
+        const table = row.closest('table');
+        const headingRows = [...(table.tHead?.rows ?? [])];
+        if (!headingRows.length && table.rows[0]) {
+          headingRows.push(table.rows[0]);
+        }
+        const cells = [...row.cells];
+        function field(label) {
+          const labeled = cells.find(cell => ['data-label', 'data-title', 'aria-label']
+            .some(attribute => label.test((cell.getAttribute(attribute) || '').trim())));
+          const heading = headingRows.flatMap(row => [...row.cells]).find(cell =>
+            label.test((cell.innerText || cell.textContent).trim()) ||
+            ['aria-label', 'title'].some(attribute => label.test((cell.getAttribute(attribute) || '').trim())));
+          const cell = labeled ?? cells[heading?.cellIndex];
+          const value = (cell?.innerText.trim() || cell?.textContent.trim() || '').replace(/\s+/g, ' ');
+          return /^(?:not listed|n\/?a|[-–—]+)$/i.test(value) ? '' : value;
+        }
+        return {
+          index,
+          title: link.innerText.trim(),
+          jobId: field(/^(?:job )?id\b/i) || cells[1]?.innerText.trim(),
+          company: field(/^organization\b/i) || cells[3]?.innerText.trim(),
+          location: field(/^(?:job\s*[-–—]?\s*)?(?:city|location)\b/i),
+          level: field(/^(?:job )?level\b/i),
+          applicationDeadline: field(/^(?:app(?:lication)?[.\s]*)?deadline\b/i),
+          duration: field(/^(?:work term (?:duration|length)|job duration|duration)\b/i),
+          term: cells[0]?.innerText.match(/\d{4}\s*-\s*(Winter|Spring|Fall)/i)?.[0],
+        };
+      }));
+    };
+    return { board, ready: true, jobs: await readEntries() };
   } catch (error) {
     if (!signedInTab) {
       await page.close().catch(() => {});
