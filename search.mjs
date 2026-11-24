@@ -48,3 +48,22 @@ export function filterJobs(jobs, profile) {
     return matchesLocationAndLevel(job, profile);
   });
 }
+
+export function rank(jobs, profile, live, { includeUnmatched = false } = {}) {
+  const keywords = [profile.program, ...profile.roles, ...profile.skills].filter(term => normalize(term));
+  const terms = [...new Map(keywords.map(term => [normalize(term), term])).values()];
+  return jobs.flatMap(job => {
+    if (!matchesLocationAndLevel(job, profile)) {
+      return [];
+    }
+    const text = normalize(job.title + ' ' + (job.description || ''));
+    const roleText = normalizeRole(text);
+    const matched = terms.filter(term =>
+      [term, ...(profile.aliases?.get(term) || [])].some(alias => includes(text, alias)) ||
+      (profile.roles.includes(term) && includes(roleText, normalizeRole(term))));
+    if (job.term && job.term !== profile.term || job.duration && job.duration !== profile.duration || (!includeUnmatched && terms.length && !matched.length)) {
+      return [];
+    }
+    return [{ ...job, matched, total: terms.length, live }];
+  }).sort((a, b) => b.matched.length - a.matched.length || a.title.localeCompare(b.title));
+}
