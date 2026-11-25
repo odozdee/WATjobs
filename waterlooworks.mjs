@@ -202,29 +202,87 @@ export async function readBoard(context, profile, board = 'direct') {
           }
           await titleLinks.nth(currentEntry.index).click({ timeout: 4000 });
           await banner.waitFor({ timeout: 8000 });
-          const detail = await banner.evaluate((heading, expected) => {
+          const detail = await banner.evaluate(async (heading, expected) => {
             const article = heading.closest('.modal__inner--document-overlay') ??
               heading.closest('.is--long-form-reading') ??
               heading.closest('[role="dialog"], .modal, .doc-viewer__document-content');
-            const text = article?.innerText.trim() || '';
-            const rows = [...(article?.querySelectorAll('tr, dt') || [])];
-            function field(label) {
-              const row = rows.find(node => label.test((node.cells?.[0]?.innerText ?? node.innerText).trim()));
-              const value = row?.cells?.[1] ?? row?.nextElementSibling;
-              return value?.innerText.trim();
+            const scrollArea = heading.closest('.modal__content .ps') ??
+              article?.querySelector('.modal__content .ps, .modal__content');
+            const durationLabel = /^(?:Work[\s-]+Term\s+(?:Duration|Length)|(?:Job|Co-op|Placement)\s+(?:Duration|Length)|Duration)\s*:?$/i;
+            const durationField = /^[ \t]*(?:Work[ -]+Term[ \t]+(?:Duration|Length)|(?:Job|Co-op|Placement)[ \t]+(?:Duration|Length)|Duration)[ \t]*(?::[ \t]*(?:\r?\n[ \t]*)?|\r?\n[ \t]*|\t+)([^\r\n]+)/im;
+            function fieldValue(label) {
+              const fields = [...(article?.querySelectorAll('tr, dt, [role="row"]') || [])];
+              const field = fields.find(node => label.test((node.cells?.[0]?.innerText ??
+                node.querySelector('[role="rowheader"]')?.innerText ?? node.innerText).trim()));
+              const value = field?.cells?.[1] ?? field?.querySelector('[role="cell"]') ??
+                (field?.tagName === 'DT' ? field.nextElementSibling : undefined);
+              if (value) {
+                return value.innerText.trim();
+              }
+              const labels = [...(article?.querySelectorAll('label, strong, b, span') || [])];
+              const labelNode = labels.find(node => label.test(node.innerText.trim()));
+              return labelNode?.nextElementSibling?.innerText.trim();
             }
-            const popupId = field(/^(?:Job|Posting)\s+ID\s*:?$/i);
-            const popupTitle = field(/^Job Title\s*:?$/i);
-            if (popupId && popupId !== expected.jobId) {
+            const applicationHeading = () => [...(article?.querySelectorAll('h2, h3, h4, h5, h6') || [])]
+              .find(node => /^Application Information\s*:?$/i.test(node.innerText.trim()));
+            const initialText = article?.innerText.trim() || '';
+            const detailsLoaded = (durationField.test(initialText) || fieldValue(durationLabel)) &&
+              /Application Delivery:\s*\S/i.test(initialText) && applicationHeading();
+            if (applicationHeading()) {
+              applicationHeading().scrollIntoView({ block: 'start' });
+              await new Promise(resolve => setTimeout(resolve, 150));
+            } else if (scrollArea && !detailsLoaded) {
+              scrollArea.scrollTop = 0;
+              for (let step = 0; step < 12; step++) {
+                const bottom = scrollArea.scrollHeight - scrollArea.clientHeight;
+                if (scrollArea.scrollTop >= bottom - 1) {
+                  break;
+                }
+                scrollArea.scrollTop = step === 11
+                  ? bottom
+                  : Math.min(bottom, scrollArea.scrollTop + scrollArea.clientHeight);
+                await new Promise(resolve => setTimeout(resolve, 75));
+              }
+            }
+            let text = article?.innerText.trim() || '';
+            let duration = fieldValue(durationLabel) || text.match(durationField)?.[1]?.trim();
+            for (let attempt = 0; !duration && attempt < 4; attempt++) {
+              await new Promise(resolve => setTimeout(resolve, 200));
+              text = article?.innerText.trim() || '';
+              duration = fieldValue(durationLabel) || text.match(durationField)?.[1]?.trim();
+            }
+            const popupId = fieldValue(/^(?:Job|Posting)\s+ID\s*:?$/i) ||
+              text.match(/^[ \t]*(?:Job|Posting)\s+ID[ \t]*:[ \t]*(?:\r?\n[ \t]*)?(\d+)\b/im)?.[1];
+            const popupTitle = fieldValue(/^Job Title\s*:?$/i);
+            const sameTitle = (a, b) => a.trim().replace(/\s+/g, ' ').toLowerCase() === b.trim().replace(/\s+/g, ' ').toLowerCase();
+            if (popupId && /^\d+$/.test(popupId) && /^\d+$/.test(expected.jobId)) {
+              if (popupId !== expected.jobId) {
+                return null;
+              }
+            } else if (popupTitle && !sameTitle(popupTitle, expected.title)) {
               return null;
             }
-            if (!popupId && popupTitle && popupTitle.toLowerCase() !== expected.title.toLowerCase()) {
-              return null;
-            }
-            return text ? { description: text } : null;
+            const cityLabel = /^(?:Job\s*[-–—]\s*)?(?:Job City|City|Work Location|Job Location)\s*:?$/i;
+            const levelLabel = /^(?:(?:Targeted\s+)?(?:Job\s+|Student\s+)?)?Levels?\s*:?$/i;
+            const city = fieldValue(cityLabel) ||
+              text.match(/^[ \t]*(?:Job\s*[-–—]\s*)?(?:Job City|City|Work Location|Job Location)[ \t]*(?::[ \t]*(?:\r?\n[ \t]*)?|\r?\n[ \t]*|\t+)([^\r\n]+)/im)?.[1]?.trim();
+            const levelText = fieldValue(levelLabel) ||
+              text.match(/^[ \t]*(?:(?:Targeted\s+)?(?:Job\s+|Student\s+)?)?Levels?[ \t]*:?[ \t]*(?:\r?\n[ \t]*)?((?:Junior|Intermediate|Senior)(?:[\s,;/]+(?:Junior|Intermediate|Senior))*)/im)?.[1];
+            const level = levelText?.match(/\b(?:Junior|Intermediate|Senior)\b/gi)?.join(', ');
+            const applicationDeadline = fieldValue(/^(?:(?:Application|App\.?)\s+)?Deadline\s*:?$/i) ||
+              text.match(/^[ \t]*(?:Application|App\.?)[ \t]+Deadline[ \t]*:?[ \t]*(?:\r?\n[ \t]*)?([^\r\n]+)/im)?.[1]?.trim();
+            return { description: text, duration, city, level, applicationDeadline };
           }, { jobId: entry.jobId, title: entry.title }, { timeout: 5000 });
           if (detail) {
-            jobs.set(key, { ...entry, ...detail, tableOnly: false });
+            jobs.set(key, {
+              ...entry,
+              description: detail.description,
+              duration: detail.duration || entry.duration,
+              location: entry.location || detail.city,
+              level: entry.level || detail.level,
+              applicationDeadline: entry.applicationDeadline || detail.applicationDeadline,
+              tableOnly: false,
+            });
           }
         } catch {
           // Keep the original listing if the popup cannot be read.
