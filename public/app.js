@@ -12,20 +12,27 @@ for (let year = firstYear; year <= lastYear; year++) {
 term.value = firstYear + ' - Winter';
 
 const form = document.querySelector('form');
-const status = document.getElementById('form-status');
+const status = document.getElementById('status');
+form.querySelector('button[type="submit"]').textContent = 'Find matches';
 
 form.addEventListener('submit', async event => {
   event.preventDefault();
+  if (!token) {
+    status.textContent = 'Connect to a Steel browser and sign in to WaterlooWorks first.';
+    return;
+  }
   const button = form.querySelector('button[type="submit"]');
   button.disabled = true;
-  status.textContent = 'Checking preferences…';
+  status.textContent = 'Searching WaterlooWorks…';
+  connect.disabled = true;
 
   try {
-    const response = await fetch('/api/preferences', {
+    const response = await fetch('/api/search', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        ...Object.fromEntries(new FormData(form)),
+        profile: Object.fromEntries(new FormData(form)),
+        token,
         board: document.getElementById('board').value,
       }),
     });
@@ -33,11 +40,18 @@ form.addEventListener('submit', async event => {
     if (!response.ok) {
       throw new Error(result.error);
     }
-    status.textContent = 'Preferences checked. WaterlooWorks search will be connected in a later update.';
+    renderJobs(result.jobs);
+    status.textContent = result.jobs.length + (result.jobs.length === 1 ? ' result' : ' results');
+    token = undefined;
+    viewer.removeAttribute('src');
+    document.getElementById('session').hidden = true;
+    connect.textContent = 'Connect';
+    connectionStatus.textContent = 'Steel browser closed.';
   } catch (error) {
     status.textContent = error.message;
   } finally {
     button.disabled = false;
+    connect.disabled = false;
   }
 });
 
@@ -89,3 +103,49 @@ connect.addEventListener('click', async () => {
     connect.disabled = false;
   }
 });
+
+function element(tag, text, className) {
+  const node = document.createElement(tag);
+  if (text) {
+    node.textContent = text;
+  }
+  if (className) {
+    node.className = className;
+  }
+  return node;
+}
+
+function renderJobs(jobs) {
+  const results = document.getElementById('results');
+  results.replaceChildren();
+  if (!jobs.length) {
+    results.append(element('p', 'No matching postings. Try broadening your preferences.'));
+    return;
+  }
+  const moreResults = element('details', '', 'more-results');
+  if (jobs.length > 3) {
+    moreResults.append(element('summary', 'Show ' + (jobs.length - 3) + ' more jobs'));
+  }
+  for (const [index, job] of jobs.entries()) {
+    const card = element('article', '', 'job');
+    card.append(element('h3', job.title));
+    const facts = element('dl', '', 'job-facts');
+    for (const [label, value] of [
+      ['Organization', job.company], ['City', job.location],
+      ['Level', job.level], ['Application Deadline', job.applicationDeadline],
+    ]) {
+      const field = element('div');
+      field.append(element('dt', label), element('dd', value || 'Not listed'));
+      facts.append(field);
+    }
+    card.append(facts);
+    if (job.jobId) {
+      card.append(element('p', 'WaterlooWorks Job ID ' + job.jobId));
+    }
+    const target = index < 3 ? results : moreResults;
+    target.append(card);
+  }
+  if (jobs.length > 3) {
+    results.append(moreResults);
+  }
+}
