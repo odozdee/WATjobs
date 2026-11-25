@@ -54,6 +54,27 @@ export async function readBoard(context, profile, board = 'direct') {
     if (new URL(page.url()).pathname !== path || new URL(page.url()).origin !== origin) {
       throw new Error('Open the Steel browser and complete WaterlooWorks sign-in and 2FA, then try again.');
     }
+    const posting = page.locator('.modal.is--visible').filter({
+      has: page.locator('.modal__inner--document-overlay'),
+    });
+    const banner = page.locator('h2, h3, h4, h5, h6, [role="heading"]')
+      .filter({ hasText: /^\s*Job Posting Information\s*:?\s*$/i })
+      .filter({ visible: true }).first();
+    const close = posting.getByRole('button', { name: /^(?:close(?: (?:document|posting))?|dismiss)$/i })
+      .or(posting.locator('button[title*="close" i]')).filter({ visible: true }).first();
+    async function closePosting() {
+      if (!(await posting.isVisible()) && !(await banner.isVisible())) {
+        return;
+      }
+      try {
+        await close.click({ timeout: 4000 });
+        await posting.waitFor({ state: 'hidden', timeout: 4000 });
+      } catch {
+        await page.keyboard.press('Escape');
+        await posting.waitFor({ state: 'hidden', timeout: 2500 });
+      }
+      await banner.waitFor({ state: 'hidden', timeout: 2500 });
+    }
     const table = page.locator('table').filter({
       has: page.locator('thead th, thead td, [role="columnheader"]').filter({ hasText: /Job\s+Title/i }),
     }).or(page.locator('table').filter({ has: page.locator('tbody a.overflow--ellipsis') }));
@@ -171,7 +192,52 @@ export async function readBoard(context, profile, board = 'direct') {
       }
       seenPages.add(current);
       for (const entry of entries) {
-        jobs.set(jobKey(entry), entry);
+        const key = jobKey(entry);
+        jobs.set(key, { ...entry, description: '', tableOnly: true });
+        try {
+          await closePosting();
+          const currentEntry = (await readEntries()).find(row => jobKey(row) === key);
+          if (!currentEntry) {
+            continue;
+          }
+          await titleLinks.nth(currentEntry.index).click({ timeout: 4000 });
+          await banner.waitFor({ timeout: 8000 });
+          const detail = await banner.evaluate((heading, expected) => {
+            const article = heading.closest('.modal__inner--document-overlay') ??
+              heading.closest('.is--long-form-reading') ??
+              heading.closest('[role="dialog"], .modal, .doc-viewer__document-content');
+            const text = article?.innerText.trim() || '';
+            const rows = [...(article?.querySelectorAll('tr, dt') || [])];
+            function field(label) {
+              const row = rows.find(node => label.test((node.cells?.[0]?.innerText ?? node.innerText).trim()));
+              const value = row?.cells?.[1] ?? row?.nextElementSibling;
+              return value?.innerText.trim();
+            }
+            const popupId = field(/^(?:Job|Posting)\s+ID\s*:?$/i);
+            const popupTitle = field(/^Job Title\s*:?$/i);
+            if (popupId && popupId !== expected.jobId) {
+              return null;
+            }
+            if (!popupId && popupTitle && popupTitle.toLowerCase() !== expected.title.toLowerCase()) {
+              return null;
+            }
+            return text ? { description: text } : null;
+          }, { jobId: entry.jobId, title: entry.title }, { timeout: 5000 });
+          if (detail) {
+            jobs.set(key, { ...entry, ...detail, tableOnly: false });
+          }
+        } catch {
+          // Keep the original listing if the popup cannot be read.
+        }
+        try {
+          await closePosting();
+        } catch {
+          interrupted = 'Could not close a posting popup.';
+          break;
+        }
+      }
+      if (interrupted) {
+        break;
       }
       try {
         if (!await advancePage(page, pageNumber)) {
