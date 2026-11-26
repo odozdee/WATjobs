@@ -67,3 +67,36 @@ export function rank(jobs, profile, live, { includeUnmatched = false } = {}) {
     return [{ ...job, matched, total: terms.length, live }];
   }).sort((a, b) => b.matched.length - a.matched.length || a.title.localeCompare(b.title));
 }
+
+export function summarizePosting(description) {
+  const lines = description.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  const shorten = (text, limit) => text.length <= limit ? text
+    : text.slice(0, limit - 1).replace(/\s+\S*$/, '') + '…';
+  const headings = [
+    ['Role', /^(?:Job Summary|Job Description|Position Summary)(?:\s*:\s*|$)/i],
+    ['Responsibilities', /^(?:Job Responsibilities|Responsibilities|Duties|What You.ll Do)(?:\s*:\s*|$)/i],
+    ['Qualifications', /^(?:Required Skills|Required Qualifications|Qualifications|Requirements|What You.ll Bring)(?:\s*:\s*|$)/i],
+  ];
+  const sections = [];
+  for (const [label, heading] of headings) {
+    const index = lines.findIndex(line => heading.test(line));
+    if (index < 0) {
+      continue;
+    }
+    const inline = lines[index].replace(heading, '').trim();
+    const excerpts = inline ? [inline] : [];
+    for (const line of lines.slice(index + 1, index + 3)) {
+      if (headings.some(([, pattern]) => pattern.test(line)) ||
+          /^(?:application information|job posting information|targeted clusters)$/i.test(line) ||
+          /^[^:]{1,45}:$/.test(line) || excerpts.length === 2) {
+        break;
+      }
+      excerpts.push(line);
+    }
+    if (excerpts.length) {
+      sections.push(label + ' — ' + shorten(excerpts.join(' '), 240));
+    }
+  }
+  if (sections.length) return sections.join('\n\n');
+  return shorten(lines.filter(line => line.length >= 45 && !/^https?:/i.test(line)).slice(0, 3).join('\n\n'), 540);
+}

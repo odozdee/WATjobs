@@ -1,5 +1,5 @@
 import { origin, readBoard } from './waterlooworks.mjs';
-import { profileFrom, rank } from './search.mjs';
+import { profileFrom, rank, summarizePosting } from './search.mjs';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
@@ -213,7 +213,11 @@ export const server = createServer(async (request, response) => {
       response.writeHead(200, {
         'content-type': 'application/json',
         'cache-control': 'no-store',
-      }).end(JSON.stringify({ ...result, jobs, keywordFallback }));
+      }).end(JSON.stringify({
+        ...result,
+        jobs: jobs.map(job => ({ ...job, description: summarizePosting(job.description || '') })),
+        keywordFallback,
+      }));
     } catch (error) {
       const message = error instanceof SyntaxError ? 'Invalid request data.'
         : /^(?:Enter |Open |Could |Connect )/.test(error.message)
