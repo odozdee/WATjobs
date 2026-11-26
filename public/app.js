@@ -151,6 +151,35 @@ function renderJobs(jobs) {
     if (job.description) {
       details.append(element('p', job.description, 'description'));
     }
+    const application = element('section', '', 'application-details');
+    application.append(element('h3', 'Application details'));
+    const applicationFields = [
+      { label: 'Application Deadline', value: job.applicationDeadline },
+      ...(job.applicationDetails ?? []),
+    ];
+    for (const { label, value } of applicationFields) {
+      if (!value) continue;
+      const field = element('p', '', 'description');
+      field.append(element('strong', label + ' — '), document.createTextNode(value));
+      application.append(field);
+    }
+    if (job.applicationEmail) {
+      const field = element('p', '', 'description');
+      const email = element('a', job.applicationEmail);
+      email.href = 'mailto:' + encodeURIComponent(job.applicationEmail).replace('%40', '@');
+      field.append(element('strong', 'If by email, send to — '), email);
+      application.append(field);
+    }
+    if (job.applicationUrl) {
+      const link = element('a', 'Open application ↗', 'apply');
+      link.href = job.applicationUrl;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      application.append(link);
+    } else if (!job.applicationEmail && !job.applicationDetails?.length) {
+      application.append(element('p', job.tableOnly ? 'Open this posting in WaterlooWorks to check how to apply.' : 'See the posting in WaterlooWorks for application instructions.', 'description'));
+    }
+    details.append(application);
     card.append(details);
     const target = index < 3 ? results : moreResults;
     target.append(card);
