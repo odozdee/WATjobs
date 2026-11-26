@@ -269,9 +269,82 @@ export async function readBoard(context, profile, board = 'direct') {
             const levelText = fieldValue(levelLabel) ||
               text.match(/^[ \t]*(?:(?:Targeted\s+)?(?:Job\s+|Student\s+)?)?Levels?[ \t]*:?[ \t]*(?:\r?\n[ \t]*)?((?:Junior|Intermediate|Senior)(?:[\s,;/]+(?:Junior|Intermediate|Senior))*)/im)?.[1];
             const level = levelText?.match(/\b(?:Junior|Intermediate|Senior)\b/gi)?.join(', ');
-            const applicationDeadline = fieldValue(/^(?:(?:Application|App\.?)\s+)?Deadline\s*:?$/i) ||
-              text.match(/^[ \t]*(?:Application|App\.?)[ \t]+Deadline[ \t]*:?[ \t]*(?:\r?\n[ \t]*)?([^\r\n]+)/im)?.[1]?.trim();
-            return { description: text, duration, city, level, applicationDeadline };
+            const applicationTitle = applicationHeading();
+            const application = applicationTitle?.closest('.panel') ?? applicationTitle?.parentElement;
+            const deadlineLabel = /^(?:(?:Application|App\.?)\s+)?Deadline\s*:?$/i;
+            const applicationDeadline = fieldValue(deadlineLabel) ||
+              (application?.innerText || text).match(/^[ \t]*(?:(?:Application|App\.?)\s+)?Deadline[ \t]*(?::[ \t]*(?:\r?\n[ \t]*)?|\r?\n[ \t]*|\t+)([^\r\n]+)/im)?.[1]?.trim();
+            const websiteLabel = /^(?:if b website go to|application (?:website|url|link))$/i;
+            const hasWebsiteLabel = value => websiteLabel.test(value.replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim());
+            const websiteFields = [...(article?.querySelectorAll('tr, dt, th, td, label, strong, b, div, span, p') || [])]
+              .filter(node => hasWebsiteLabel((node.cells?.[0]?.innerText ?? node.innerText).trim()));
+            const validUrl = value => {
+              try {
+                const url = new URL(value);
+                return /^https?:$/.test(url.protocol) && !url.username && !url.password ? url.href : undefined;
+              } catch {
+                return undefined;
+              }
+            };
+            function linkIn(node) {
+              if (!node) {
+                return undefined;
+              }
+              const links = [node, ...node.querySelectorAll('a[href]')];
+              return links.map(link => validUrl(link.href)).find(Boolean);
+            }
+            function urlInText(value) {
+              const url = value?.match(/(?:https?:\/\/|www\.)[^\s<>"]+/i)?.[0];
+              if (url) {
+                return validUrl(/^www\./i.test(url) ? 'https://' + url : url);
+              }
+              const bare = value?.trim();
+              if (/^(?:[a-z0-9-]+\.)+[a-z]{2,}(?:[/?#][^\s<>"]*)?$/i.test(bare || '')) {
+                return validUrl('https://' + bare);
+              }
+            }
+            let applicationUrl;
+            for (const field of websiteFields) {
+              const value = field.cells?.[1] ?? field.nextElementSibling ?? field.parentElement?.nextElementSibling;
+              applicationUrl = linkIn(value) || urlInText(value?.innerText);
+              if (applicationUrl) {
+                break;
+              }
+            }
+            if (!applicationUrl) {
+              const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+              for (const [index, line] of lines.entries()) {
+                const inline = line.match(/^(.*?(?:go to|application (?:website|url|link)))\s*:?\s*(\S.*)$/i);
+                if (hasWebsiteLabel(line)) applicationUrl = urlInText(lines[index + 1]);
+                else if (inline && hasWebsiteLabel(inline[1])) applicationUrl = urlInText(inline[2]);
+                if (applicationUrl) {
+                  break;
+                }
+              }
+            }
+            if (!applicationUrl && application?.classList.contains('panel')) {
+              const apply = [...application.querySelectorAll('a[href]')]
+                .find(link => /^(?:apply now|apply online|apply for (?:this|the) (?:job|position))\b/i.test(link.innerText.trim()) && validUrl(link.href));
+              applicationUrl = validUrl(apply?.href);
+            }
+            const applicationDetails = [];
+            for (const label of ['Application Delivery', 'Application Method', 'Application Instructions',
+              'Additional Application Information', 'Application Documents Required', 'Required Documents']) {
+              const value = fieldValue(new RegExp('^' + label + '\\s*:?$', 'i')) ||
+                (application?.innerText || text).match(new RegExp(
+                  '^[ \\t]*' + label + '[ \\t]*(?::[ \\t]*(?:\\r?\\n[ \\t]*)?|\\r?\\n[ \\t]*|\\t+)([^\\r\\n]+)', 'im',
+                ))?.[1]?.trim();
+              if (value) {
+                applicationDetails.push({ label, value });
+              }
+            }
+            const emailLabel = /^If\s+by\s+e[ -]?mail\s*,?\s*send\s+to\s*:?$/i;
+            const emailField = fieldValue(emailLabel) ||
+              (application?.innerText || text).match(
+                /^[ \t]*If[ \t]+by[ \t]+e[ -]?mail[ \t]*,?[ \t]*send[ \t]+to[ \t]*:?[ \t]*(?:\r?\n[ \t]*)?([^\r\n]+)/im,
+              )?.[1];
+            const applicationEmail = emailField?.match(/[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9-]+(?:\.[A-Z0-9-]+)+/i)?.[0];
+            return { description: text, duration, city, level, applicationDeadline, applicationDetails, applicationUrl, applicationEmail };
           }, { jobId: entry.jobId, title: entry.title }, { timeout: 5000 });
           if (detail) {
             jobs.set(key, {
@@ -281,6 +354,9 @@ export async function readBoard(context, profile, board = 'direct') {
               location: entry.location || detail.city,
               level: entry.level || detail.level,
               applicationDeadline: entry.applicationDeadline || detail.applicationDeadline,
+              applicationDetails: detail.applicationDetails,
+              applicationUrl: detail.applicationUrl,
+              applicationEmail: detail.applicationEmail,
               tableOnly: false,
             });
           }
