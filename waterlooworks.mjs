@@ -184,6 +184,7 @@ export async function readBoard(context, profile, board = 'direct') {
     let interrupted;
     const jobKey = entry => entry.jobId || JSON.stringify([entry.title, entry.company, entry.location]);
     const pageKey = rows => JSON.stringify(rows.map(jobKey).sort());
+    let recovered = false;
     while (entries.length) {
       const current = pageKey(entries);
       if (seenPages.has(current)) {
@@ -191,7 +192,11 @@ export async function readBoard(context, profile, board = 'direct') {
         break;
       }
       seenPages.add(current);
+      let retryPage = false;
       for (const entry of entries) {
+        if (jobs.has(jobKey(entry))) {
+          continue;
+        }
         const key = jobKey(entry);
         jobs.set(key, { ...entry, description: '', tableOnly: true });
         try {
@@ -366,12 +371,31 @@ export async function readBoard(context, profile, board = 'direct') {
         try {
           await closePosting();
         } catch {
-          interrupted = 'Could not close a posting popup.';
-          break;
+          if (recovered) {
+            interrupted = 'Could not close a posting popup after recovery.';
+            break;
+          }
+          recovered = true;
+          try {
+            await page.goto(boardUrl, { waitUntil: 'commit', timeout: 12000 });
+            await openFilteredBoard();
+            await titleLinks.first().waitFor({ timeout: 12000 });
+            entries = await readEntries();
+            seenPages.clear();
+            pageNumber = 1;
+            retryPage = true;
+            break;
+          } catch {
+            interrupted = 'Could not restore the results after a stuck popup.';
+            break;
+          }
         }
       }
       if (interrupted) {
         break;
+      }
+      if (retryPage) {
+        continue;
       }
       try {
         if (!await advancePage(page, pageNumber)) {
