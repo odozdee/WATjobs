@@ -1,4 +1,7 @@
 import { filterJobs } from './search.mjs';
+
+const scanBudgetSeconds = 180;
+const scanTimeoutMessage = 'Reached the ' + scanBudgetSeconds + '-second scan limit';
 export const origin = 'https://waterlooworks.uwaterloo.ca';
 const boards = new Map([
   ['direct', '/myAccount/co-op/direct/jobs.htm'],
@@ -130,6 +133,7 @@ export async function readBoard(context, profile, board = 'direct') {
       });
     }
     await openFilteredBoard();
+    const scanDeadline = Date.now() + scanBudgetSeconds * 1000;
     const titleLinks = visibleTable.locator('tbody a.overflow--ellipsis');
     const readEntries = async () => {
       await visibleTable.evaluate(async table => {
@@ -185,6 +189,7 @@ export async function readBoard(context, profile, board = 'direct') {
     const jobKey = entry => entry.jobId || JSON.stringify([entry.title, entry.company, entry.location]);
     const pageKey = rows => JSON.stringify(rows.map(jobKey).sort());
     let recovered = false;
+    const attempted = new Set();
     while (entries.length) {
       const current = pageKey(entries);
       if (seenPages.has(current)) {
@@ -194,11 +199,21 @@ export async function readBoard(context, profile, board = 'direct') {
       seenPages.add(current);
       let retryPage = false;
       for (const entry of entries) {
-        if (jobs.has(jobKey(entry))) {
+        const key = jobKey(entry);
+        if (!jobs.has(key)) {
+          jobs.set(key, { ...entry, description: '', tableOnly: true });
+        }
+      }
+      for (const entry of entries) {
+        if (Date.now() >= scanDeadline) {
+          interrupted = scanTimeoutMessage;
+          break;
+        }
+        if (attempted.has(jobKey(entry))) {
           continue;
         }
         const key = jobKey(entry);
-        jobs.set(key, { ...entry, description: '', tableOnly: true });
+        attempted.add(key);
         try {
           await closePosting();
           const currentEntry = (await readEntries()).find(row => jobKey(row) === key);
@@ -371,6 +386,10 @@ export async function readBoard(context, profile, board = 'direct') {
         try {
           await closePosting();
         } catch {
+          if (Date.now() >= scanDeadline) {
+            interrupted = scanTimeoutMessage;
+            break;
+          }
           if (recovered) {
             interrupted = 'Could not close a posting popup after recovery.';
             break;
@@ -394,6 +413,10 @@ export async function readBoard(context, profile, board = 'direct') {
       if (interrupted) {
         break;
       }
+      if (Date.now() >= scanDeadline) {
+        interrupted = scanTimeoutMessage;
+        break;
+      }
       if (retryPage) {
         continue;
       }
@@ -401,7 +424,7 @@ export async function readBoard(context, profile, board = 'direct') {
         if (!await advancePage(page, pageNumber)) {
           break;
         }
-        const deadline = Date.now() + 12000;
+        const deadline = Math.min(Date.now() + 12000, scanDeadline);
         do {
           entries = await readEntries();
           if (entries.length && pageKey(entries) !== current) {
@@ -410,7 +433,8 @@ export async function readBoard(context, profile, board = 'direct') {
           await new Promise(resolve => setTimeout(resolve, 250));
         } while (Date.now() < deadline);
         if (!entries.length || pageKey(entries) === current) {
-          interrupted = 'WaterlooWorks did not load the next results page.';
+          interrupted = Date.now() >= scanDeadline ? scanTimeoutMessage
+            : 'WaterlooWorks did not load the next results page.';
           break;
         }
         pageNumber++;
