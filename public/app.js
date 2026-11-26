@@ -127,8 +127,9 @@ function renderJobs(jobs) {
     moreResults.append(element('summary', 'Show ' + (jobs.length - 3) + ' more jobs'));
   }
   for (const [index, job] of jobs.entries()) {
-    const card = element('article', '', 'job');
-    card.append(element('h3', job.title));
+    const card = element('details', '', 'job');
+    const summary = element('summary', job.title, 'job-title');
+    card.append(summary);
     const facts = element('dl', '', 'job-facts');
     for (const [label, value] of [
       ['Organization', job.company], ['City', job.location],
@@ -142,6 +143,15 @@ function renderJobs(jobs) {
     if (job.jobId) {
       card.append(element('p', 'WaterlooWorks Job ID ' + job.jobId));
     }
+    const details = element('div', '', 'job-details');
+    const metadata = [job.term, job.duration].filter(Boolean);
+    if (metadata.length) {
+      details.append(element('p', metadata.join(' · ')));
+    }
+    if (job.description) {
+      details.append(element('p', job.description, 'description'));
+    }
+    card.append(details);
     const target = index < 3 ? results : moreResults;
     target.append(card);
   }

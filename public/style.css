@@ -169,3 +169,18 @@ button:disabled {
   margin-top: 1rem;
   cursor: pointer;
 }
+
+.job-title {
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.job-details {
+  margin-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.description {
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
