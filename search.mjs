@@ -117,7 +117,8 @@ export function rank(jobs, profile, live) {
         includes(normalizeRole(job.title), normalizeRole(alias))));
     const preferences = ['location', 'level'].filter(field =>
       profile[field] && includes(normalize(job[field] || ''), profile[field]));
-    const score = matched.length + titleMatches.length * 2 + preferences.length;
-    return [{ ...job, matched, total: terms.length, score, live }];
-  }).sort((a, b) => b.score - a.score || a.title.localeCompare(b.title));
+    const score = matched.length + titleMatches.length * 2;
+    return [{ ...job, matched, total: terms.length, preferenceMatches: preferences.length, score, live }];
+  }).sort((a, b) => b.preferenceMatches - a.preferenceMatches ||
+    b.score - a.score || a.title.localeCompare(b.title));
 }
