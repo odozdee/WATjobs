@@ -69,39 +69,6 @@ export function matchesLocationAndLevel(job, profile) {
     (!profile.level || includes(normalize(job.level || ''), profile.level));
 }
 
-export function filterJobs(jobs, profile) {
-  return jobs.filter(job => {
-    if (job.term?.replace(/\s*-\s*/, ' - ').toLowerCase() !== profile.term.toLowerCase()) {
-      return false;
-    }
-    const months = [...(job.duration || '').matchAll(/\b(4|8|12|16)\b/g)]
-      .map(match => match[0] + ' months');
-    if (months.length && !months.includes(profile.duration)) {
-      return false;
-    }
-    return matchesLocationAndLevel(job, profile);
-  });
-}
-
-export function rank(jobs, profile, live, { includeUnmatched = false } = {}) {
-  const keywords = [profile.program, ...profile.roles, ...profile.skills].filter(term => normalize(term));
-  const terms = [...new Map(keywords.map(term => [normalize(term), term])).values()];
-  return jobs.flatMap(job => {
-    if (!matchesLocationAndLevel(job, profile)) {
-      return [];
-    }
-    const text = normalize(job.title + ' ' + (job.description || ''));
-    const roleText = normalizeRole(text);
-    const matched = terms.filter(term =>
-      [term, ...(profile.aliases?.get(term) || [])].some(alias => includes(text, alias)) ||
-      (profile.roles.includes(term) && includes(roleText, normalizeRole(term))));
-    if (job.term && job.term !== profile.term || job.duration && job.duration !== profile.duration || (!includeUnmatched && terms.length && !matched.length)) {
-      return [];
-    }
-    return [{ ...job, matched, total: terms.length, live }];
-  }).sort((a, b) => b.matched.length - a.matched.length || a.title.localeCompare(b.title));
-}
-
 export function summarizePosting(description) {
   const lines = description.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
   const shorten = (text, limit) => text.length <= limit ? text
@@ -131,6 +98,27 @@ export function summarizePosting(description) {
       sections.push(label + ' — ' + shorten(excerpts.join(' '), 240));
     }
   }
-  if (sections.length) return sections.join('\n\n');
+  if (sections.length) {
+    return sections.join('\n\n');
+  }
   return shorten(lines.filter(line => line.length >= 45 && !/^https?:/i.test(line)).slice(0, 3).join('\n\n'), 540);
+}
+
+export function rank(jobs, profile, live, { includeUnmatched = false } = {}) {
+  const keywords = [profile.program, ...profile.roles, ...profile.skills].filter(term => normalize(term));
+  const terms = [...new Map(keywords.map(term => [normalize(term), term])).values()];
+  return jobs.flatMap(job => {
+    if (!matchesLocationAndLevel(job, profile)) {
+      return [];
+    }
+    const text = normalize(job.title + ' ' + job.description);
+    const roleText = normalizeRole(text);
+    const matched = terms.filter(term =>
+      [term, ...(profile.aliases?.get(term) || [])].some(alias => includes(text, alias)) ||
+      (profile.roles.includes(term) && includes(roleText, normalizeRole(term))));
+    if (job.term && job.term !== profile.term || job.duration && job.duration !== profile.duration || (!includeUnmatched && terms.length && !matched.length)) {
+      return [];
+    }
+    return [{ ...job, matched, total: terms.length, live }];
+  }).sort((a, b) => b.matched.length - a.matched.length || a.title.localeCompare(b.title));
 }
