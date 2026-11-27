@@ -1,13 +1,13 @@
-import { filterJobs } from './search.mjs';
+import { matchesLocationAndLevel, rank } from './search.mjs';
 
 const scanBudgetSeconds = 180;
 const scanTimeoutMessage = 'Reached the ' + scanBudgetSeconds + '-second scan limit';
+
 export const origin = 'https://waterlooworks.uwaterloo.ca';
 const boards = new Map([
   ['direct', '/myAccount/co-op/direct/jobs.htm'],
   ['full', '/myAccount/co-op/full/jobs.htm'],
 ]);
-
 const nextPageLabel = /^(?:go to\s+)?next(?:\s+page)?(?:\s+(?:chevron_right|navigate_next|keyboard_arrow_right|›|»))?$|^(?:chevron_right|navigate_next|keyboard_arrow_right|›|»|>)$/i;
 
 const previousPageLabel = /^(?:(?:go to\s+)?(?:previous|prev)(?:\s+page)?|chevron_left|navigate_before|keyboard_arrow_left|‹|«|<)$/i;
@@ -39,7 +39,7 @@ async function advancePage(page, pageNumber, direction = 1) {
   return false;
 }
 
-export async function readBoard(context, profile, board = 'direct') {
+export async function readBoard(context, profile, board = 'direct', reportProgress = () => {}, keywordsReady) {
   const path = boards.get(board);
   if (!path) {
     throw new Error('Enter a supported WaterlooWorks job board.');
@@ -78,6 +78,9 @@ export async function readBoard(context, profile, board = 'direct') {
       }
       await banner.waitFor({ state: 'hidden', timeout: 2500 });
     }
+    await closePosting().catch(() => {
+      throw new Error('Could not close the open posting. Close it in the live browser and try again.');
+    });
     const table = page.locator('table').filter({
       has: page.locator('thead th, thead td, [role="columnheader"]').filter({ hasText: /Job\s+Title/i }),
     }).or(page.locator('table').filter({ has: page.locator('tbody a.overflow--ellipsis') }));
@@ -181,47 +184,121 @@ export async function readBoard(context, profile, board = 'direct') {
         };
       }));
     };
-    const jobs = new Map();
+    const jobs = [];
+    const candidates = new Map();
+    const readMonths = value => [...(value || '').toLowerCase()
+      .replace(/\b(four|eight|twelve|sixteen)\b/g, word => ({ four: 4, eight: 8, twelve: 12, sixteen: 16 })[word])
+      .matchAll(/\b(4|8|12|16)\b/g)].map(match => match[0] + ' months');
+    const seenJobs = new Set();
     const seenPages = new Set();
-    let pageNumber = 1;
-    let entries = await readEntries();
-    let interrupted;
     const jobKey = entry => entry.jobId || JSON.stringify([entry.title, entry.company, entry.location]);
-    const pageKey = rows => JSON.stringify(rows.map(jobKey).sort());
-    let recovered = false;
-    const attempted = new Set();
-    while (entries.length) {
+    const pageKey = entries => JSON.stringify(entries.map(jobKey).sort());
+    async function nextEntries(previous, pageNumber, direction = 1) {
+      if (!await advancePage(page, pageNumber, direction)) {
+        return null;
+      }
+      const deadline = Math.min(Date.now() + 12000, scanDeadline);
+      while (Date.now() < deadline) {
+        const next = await readEntries();
+        if (next.length && pageKey(next) !== previous) {
+          return next;
+        }
+        await new Promise(resolve => setTimeout(resolve, 250));
+      }
+      throw new Error('WaterlooWorks did not load a new results page');
+    }
+    async function reopenBoard() {
+      await page.goto(boardUrl, { waitUntil: 'commit', timeout: 12000 });
+      await openFilteredBoard();
+      await titleLinks.first().waitFor({
+        timeout: Math.max(1, Math.min(12000, scanDeadline - Date.now())),
+      });
+      return readEntries();
+    }
+    let skipped = 0;
+    const popupFailures = { open: 0, load: 0, read: 0 };
+    let missingDuration = 0;
+    let differentDuration = 0;
+    let differentLocationOrLevel = 0;
+    let missingCityOrLevel = 0;
+    let checked = 0;
+    let pageNumber = 1;
+    const traversal = new Set();
+    let interrupted;
+    let entries = await readEntries();
+    let lastPage = 1;
+    while (entries.length && Date.now() < scanDeadline) {
       const current = pageKey(entries);
       if (seenPages.has(current)) {
-        interrupted = 'WaterlooWorks repeated a results page.';
         break;
       }
+      lastPage = pageNumber;
       seenPages.add(current);
-      let retryPage = false;
       for (const entry of entries) {
-        const key = jobKey(entry);
-        if (!jobs.has(key)) {
-          jobs.set(key, { ...entry, description: '', tableOnly: true });
+        if (entry.term?.replace(/\s*-\s*/, ' - ').toLowerCase() !== profile.term.toLowerCase()) {
+          continue;
         }
+        const months = readMonths(entry.duration);
+        if ((months.length && !months.includes(profile.duration)) || !matchesLocationAndLevel(entry, profile)) {
+          continue;
+        }
+        const key = jobKey(entry);
+        candidates.set(key, {
+          ...entry, key, term: profile.term, duration: months.length ? profile.duration : undefined,
+          description: '', tableOnly: true, board,
+        });
       }
-      for (const entry of entries) {
+      reportProgress(candidates.size, seenPages.size, 'list');
+      try {
+        entries = await nextEntries(current, pageNumber++) ?? [];
+      } catch {
+        interrupted = 'Could not finish scanning the results pages';
+        break;
+      }
+    }
+    await keywordsReady;
+    const rankedCandidates = rank([...candidates.values()], profile, true, { includeUnmatched: true });
+    const targets = new Map(rankedCandidates.map((job, index) => [job.key, index]));
+    const listWarning = interrupted;
+    interrupted = undefined;
+    pageNumber = lastPage;
+    let direction = -1;
+    entries = targets.size && Date.now() < scanDeadline ? await readEntries().catch(() => []) : [];
+    while (entries.length) {
+      const current = pageKey(entries);
+      seenPages.add(current);
+      traversal.add(current);
+      reportProgress(checked, seenPages.size, 'details', targets.size);
+      let reopened = false;
+      const forTerm = entries.filter(entry =>
+        entry.term?.replace(/\s*-\s*/, ' - ').toLowerCase() === profile.term.toLowerCase() &&
+        matchesLocationAndLevel(entry, {
+          location: entry.location ? profile.location : '',
+          level: entry.level ? profile.level : '',
+        })).filter(entry => targets.has(jobKey(entry)))
+        .sort((a, b) => targets.get(jobKey(a)) - targets.get(jobKey(b)));
+      for (const entry of forTerm) {
         if (Date.now() >= scanDeadline) {
           interrupted = scanTimeoutMessage;
           break;
         }
-        if (attempted.has(jobKey(entry))) {
+        const key = jobKey(entry);
+        if (seenJobs.has(key)) {
           continue;
         }
-        const key = jobKey(entry);
-        attempted.add(key);
+        seenJobs.add(key);
+        checked++;
+        reportProgress(checked, seenPages.size, 'details', targets.size);
+        let stage = 'open';
         try {
-          await closePosting();
           const currentEntry = (await readEntries()).find(row => jobKey(row) === key);
           if (!currentEntry) {
-            continue;
+            throw new Error('Posting moved out of the results page');
           }
           await titleLinks.nth(currentEntry.index).click({ timeout: 4000 });
+          stage = 'load';
           await banner.waitFor({ timeout: 8000 });
+          stage = 'read';
           const detail = await banner.evaluate(async (heading, expected) => {
             const article = heading.closest('.modal__inner--document-overlay') ??
               heading.closest('.is--long-form-reading') ??
@@ -335,8 +412,12 @@ export async function readBoard(context, profile, board = 'direct') {
               const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
               for (const [index, line] of lines.entries()) {
                 const inline = line.match(/^(.*?(?:go to|application (?:website|url|link)))\s*:?\s*(\S.*)$/i);
-                if (hasWebsiteLabel(line)) applicationUrl = urlInText(lines[index + 1]);
-                else if (inline && hasWebsiteLabel(inline[1])) applicationUrl = urlInText(inline[2]);
+                if (hasWebsiteLabel(line)) {
+                  applicationUrl = urlInText(lines[index + 1]);
+                }
+                else if (inline && hasWebsiteLabel(inline[1])) {
+                  applicationUrl = urlInText(inline[2]);
+                }
                 if (applicationUrl) {
                   break;
                 }
@@ -366,22 +447,39 @@ export async function readBoard(context, profile, board = 'direct') {
             const applicationEmail = emailField?.match(/[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9-]+(?:\.[A-Z0-9-]+)+/i)?.[0];
             return { description: text, duration, city, level, applicationDeadline, applicationDetails, applicationUrl, applicationEmail };
           }, { jobId: entry.jobId, title: entry.title }, { timeout: 5000 });
-          if (detail) {
-            jobs.set(key, {
-              ...entry,
-              description: detail.description,
-              duration: detail.duration || entry.duration,
-              location: entry.location || detail.city,
-              level: entry.level || detail.level,
-              applicationDeadline: entry.applicationDeadline || detail.applicationDeadline,
-              applicationDetails: detail.applicationDetails,
-              applicationUrl: detail.applicationUrl,
-              applicationEmail: detail.applicationEmail,
-              tableOnly: false,
-            });
+          if (!detail) {
+            throw new Error('Popup did not match the selected listing');
+          }
+          const popupMonths = readMonths(detail.duration);
+          const months = popupMonths.length ? popupMonths : readMonths(entry.duration);
+          if (months.length && !months.includes(profile.duration)) {
+            differentDuration++;
+            candidates.delete(key);
+          } else {
+            if (!months.length) {
+              missingDuration++;
+            }
+            const job = {
+              title: entry.title, company: entry.company, location: entry.location || detail.city,
+              level: entry.level || detail.level, applicationDeadline: entry.applicationDeadline || detail.applicationDeadline,
+              jobId: entry.jobId, board, term: profile.term, duration: months.length ? profile.duration : undefined,
+              description: detail.description, applicationDetails: detail.applicationDetails,
+              applicationUrl: detail.applicationUrl, applicationEmail: detail.applicationEmail,
+            };
+            if ((profile.location && !job.location) || (profile.level && !job.level)) {
+              missingCityOrLevel++;
+            }
+            else if (matchesLocationAndLevel(job, profile)) {
+              jobs.push(job);
+              candidates.delete(key);
+            } else {
+              differentLocationOrLevel++;
+              candidates.delete(key);
+            }
           }
         } catch {
-          // Keep the original listing if the popup cannot be read.
+          skipped++;
+          popupFailures[stage]++;
         }
         try {
           await closePosting();
@@ -390,22 +488,20 @@ export async function readBoard(context, profile, board = 'direct') {
             interrupted = scanTimeoutMessage;
             break;
           }
-          if (recovered) {
-            interrupted = 'Could not close a posting popup after recovery.';
-            break;
-          }
-          recovered = true;
           try {
-            await page.goto(boardUrl, { waitUntil: 'commit', timeout: 12000 });
-            await openFilteredBoard();
-            await titleLinks.first().waitFor({ timeout: 12000 });
-            entries = await readEntries();
-            seenPages.clear();
-            pageNumber = 1;
-            retryPage = true;
+            entries = await reopenBoard();
+            if (!entries.length) {
+              throw new Error('No results after reloading');
+            }
+            if (pageKey(entries) !== current) {
+              pageNumber = 1;
+            }
+            direction = 1;
+            traversal.clear();
+            reopened = true;
             break;
           } catch {
-            interrupted = 'Could not restore the results after a stuck popup.';
+            interrupted = 'A posting popup did not close and the results page could not be restored';
             break;
           }
         }
@@ -413,41 +509,59 @@ export async function readBoard(context, profile, board = 'direct') {
       if (interrupted) {
         break;
       }
+      if (seenJobs.size >= targets.size) {
+        break;
+      }
       if (Date.now() >= scanDeadline) {
         interrupted = scanTimeoutMessage;
         break;
       }
-      if (retryPage) {
+      if (reopened) {
         continue;
       }
       try {
-        if (!await advancePage(page, pageNumber)) {
+        if (direction === -1 && pageNumber === 1) {
           break;
         }
-        const deadline = Math.min(Date.now() + 12000, scanDeadline);
-        do {
-          entries = await readEntries();
-          if (entries.length && pageKey(entries) !== current) {
+        entries = await nextEntries(current, pageNumber, direction).catch(error => {
+          if (direction === -1) {
+            return null;
+          }
+          throw error;
+        });
+        if (!entries && direction === -1) {
+          if (Date.now() >= scanDeadline) {
             break;
           }
-          await new Promise(resolve => setTimeout(resolve, 250));
-        } while (Date.now() < deadline);
-        if (!entries.length || pageKey(entries) === current) {
-          interrupted = Date.now() >= scanDeadline ? scanTimeoutMessage
-            : 'WaterlooWorks did not load the next results page.';
+          entries = await reopenBoard();
+          traversal.clear();
+          pageNumber = 1;
+          direction = 1;
+          continue;
+        }
+        if (!entries) {
           break;
         }
-        pageNumber++;
+        if (traversal.has(pageKey(entries))) {
+          interrupted = 'WaterlooWorks did not load a new results page';
+          break;
+        }
+        pageNumber += direction;
       } catch {
-        interrupted = 'Could not finish scanning the results pages.';
+        interrupted = 'Could not open the next WaterlooWorks results page';
         break;
       }
     }
-    return { board, ready: true, jobs: filterJobs([...jobs.values()], profile), pagesChecked: seenPages.size, interrupted };
-  } catch (error) {
+    if (Date.now() >= scanDeadline && checked < targets.size) {
+      interrupted ??= scanTimeoutMessage;
+    }
+    if (checked < targets.size) {
+      interrupted ??= 'Some postings could not be reached for verification';
+    }
+    return { jobs: [...jobs, ...candidates.values()], skipped, popupFailures, missingDuration, checked, pagesChecked: seenPages.size, interrupted: interrupted ?? listWarning, differentDuration, differentLocationOrLevel, missingCityOrLevel };
+  } finally {
     if (!signedInTab) {
       await page.close().catch(() => {});
     }
-    throw error;
   }
 }
