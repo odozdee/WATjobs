@@ -24,14 +24,16 @@ form.addEventListener('submit', async event => {
   const button = form.querySelector('button[type="submit"]');
   button.disabled = true;
   status.textContent = 'Searching WaterlooWorks…';
+  saveSearch.disabled = savedSearches.disabled = true;
   connect.disabled = true;
 
   try {
+    const profile = Object.fromEntries(new FormData(form));
     const response = await fetch('/api/search', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        profile: Object.fromEntries(new FormData(form)),
+        profile,
         token,
         board: document.getElementById('board').value,
       }),
@@ -44,6 +46,15 @@ form.addEventListener('submit', async event => {
     status.textContent = result.keywordFallback
       ? 'No keyword matches. Showing ' + result.jobs.length + (result.jobs.length === 1 ? ' candidate' : ' candidates') + ' based on available filters.'
       : result.jobs.length + (result.jobs.length === 1 ? ' result' : ' results');
+    const savedAt = new Date();
+    currentSearch = {
+      id: crypto.randomUUID(),
+      savedAt: savedAt.toISOString(),
+      label: [profile.roles || profile.term, savedAt.toLocaleString(), result.jobs.length + ' results'].join(' · '),
+      summary: status.textContent,
+      jobs: result.jobs,
+    };
+    savedSearches.value = '';
     token = undefined;
     viewer.removeAttribute('src');
     document.getElementById('session').hidden = true;
@@ -53,6 +64,8 @@ form.addEventListener('submit', async event => {
     status.textContent = error.message;
   } finally {
     button.disabled = false;
+    savedSearches.disabled = false;
+    saveSearch.disabled = !currentSearch?.jobs.length || history.some(search => search.id === currentSearch.id);
     connect.disabled = false;
   }
 });
@@ -116,6 +129,58 @@ function element(tag, text, className) {
   }
   return node;
 }
+
+const saveSearch = document.getElementById('save-search');
+const savedSearches = document.getElementById('saved-searches');
+const savedSearchKey = 'watjobs.savedSearches.v1';
+let currentSearch;
+let history = [];
+try {
+  const stored = JSON.parse(localStorage.getItem(savedSearchKey) || '[]');
+  if (Array.isArray(stored)) {
+    history = stored;
+  }
+} catch {
+  // Searching still works when browser storage is unavailable.
+}
+
+function updateSavedSearches() {
+  savedSearches.replaceChildren(new Option('Choose a saved search', ''));
+  for (const search of history) {
+    savedSearches.add(new Option(search.label, search.id));
+  }
+}
+
+updateSavedSearches();
+
+saveSearch.addEventListener('click', () => {
+  if (!currentSearch || history.some(search => search.id === currentSearch.id)) {
+    return;
+  }
+  try {
+    const nextHistory = [currentSearch, ...history];
+    localStorage.setItem(savedSearchKey, JSON.stringify(nextHistory));
+    history = nextHistory;
+    updateSavedSearches();
+    savedSearches.value = currentSearch.id;
+    saveSearch.disabled = true;
+    status.textContent = 'Search saved in this browser.';
+  } catch {
+    status.textContent = 'Could not save this search. Browser storage may be full or unavailable.';
+  }
+});
+
+savedSearches.addEventListener('change', () => {
+  const search = history.find(item => item.id === savedSearches.value);
+  if (!search) {
+    return;
+  }
+  currentSearch = search;
+  saveSearch.disabled = true;
+  renderJobs(search.jobs);
+  const summary = search.summary.split(' · ')[0];
+  status.textContent = 'Saved search from ' + new Date(search.savedAt).toLocaleString() + ' · ' + summary;
+});
 
 function renderJobs(jobs) {
   const results = document.getElementById('results');
