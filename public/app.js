@@ -1,121 +1,72 @@
-const term = document.getElementById('term');
+const get = id => document.getElementById(id);
+const form = get('profile');
+const term = form.elements.term;
 const firstYear = 2027;
 const lastYear = Math.max(firstYear, new Date().getFullYear()) + 4;
-
 for (let year = firstYear; year <= lastYear; year++) {
   for (const season of ['Winter', 'Spring', 'Fall']) {
-    const value = year + ' - ' + season;
-    term.add(new Option(season + ' ' + year, value));
+    term.add(new Option(year + ' - ' + season));
   }
 }
-
 term.value = firstYear + ' - Winter';
 
-const form = document.querySelector('form');
-const status = document.getElementById('status');
-form.querySelector('button[type="submit"]').textContent = 'Find matches';
-
-form.addEventListener('submit', async event => {
-  event.preventDefault();
-  if (!token) {
-    status.textContent = 'Connect to a Steel browser and sign in to WaterlooWorks first.';
-    return;
-  }
-  const button = form.querySelector('button[type="submit"]');
-  button.disabled = true;
-  status.textContent = 'Searching WaterlooWorks…';
-  saveSearch.disabled = savedSearches.disabled = true;
-  connect.disabled = true;
-
-  try {
-    const profile = Object.fromEntries(new FormData(form));
-    const response = await fetch('/api/search', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        profile,
-        token,
-        board: document.getElementById('board').value,
-      }),
-    });
-    const result = await response.json();
-    if (!response.ok) {
-      throw new Error(result.error);
-    }
-    renderJobs(result.jobs);
-    status.textContent = result.keywordFallback
-      ? 'No keyword matches. Showing ' + result.jobs.length + (result.jobs.length === 1 ? ' candidate' : ' candidates') + ' based on available filters.'
-      : result.jobs.length + (result.jobs.length === 1 ? ' result' : ' results');
-    const savedAt = new Date();
-    currentSearch = {
-      id: crypto.randomUUID(),
-      savedAt: savedAt.toISOString(),
-      label: [profile.roles || profile.term, savedAt.toLocaleString(), result.jobs.length + ' results'].join(' · '),
-      summary: status.textContent,
-      jobs: result.jobs,
-    };
-    savedSearches.value = '';
-    token = undefined;
-    viewer.removeAttribute('src');
-    document.getElementById('session').hidden = true;
-    connect.textContent = 'Connect';
-    connectionStatus.textContent = 'Steel browser closed.';
-  } catch (error) {
-    status.textContent = error.message;
-  } finally {
-    button.disabled = false;
-    savedSearches.disabled = false;
-    saveSearch.disabled = !currentSearch?.jobs.length || history.some(search => search.id === currentSearch.id);
-    connect.disabled = false;
-  }
-});
-
-const connect = document.getElementById('connect');
-const connectionStatus = document.getElementById('source-note');
-const viewer = document.getElementById('viewer');
 let token;
+let liveReady = false;
+const status = get('status');
+const connect = get('connect');
+const connectionStatus = get('source-note');
 
-fetch('/api/config').then(async response => {
-  const config = await response.json();
-  connect.disabled = !config.liveReady;
-  connectionStatus.textContent = config.liveReady
-    ? 'Sign in through Steel to search WaterlooWorks.'
-    : 'Set up Steel to enable WaterlooWorks search.';
+async function request(path, data) {
+  const response = await fetch('/api/' + path, data === undefined ? {} : {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  const result = await response.json();
+  if (!response.ok) {
+    throw new Error(result.error);
+  }
+  return result;
+}
+
+function showSession(session) {
+  token = session?.token;
+  get('session').hidden = !token;
+  if (session) {
+    get('viewer').src = session.viewer;
+  }
+  else {
+    get('viewer').removeAttribute('src');
+  }
+  connect.textContent = token ? 'Disconnect' : 'Connect';
+}
+
+request('config').then(config => {
+  liveReady = config.liveReady;
+  connect.disabled = !liveReady;
+  connectionStatus.textContent = liveReady ? 'Sign in through Steel to search WaterlooWorks.' : 'Set up Steel to enable WaterlooWorks search.';
 }).catch(() => {
   connectionStatus.textContent = 'Could not check live search availability.';
 });
 
 connect.addEventListener('click', async () => {
-  connect.disabled = true;
+  connect.disabled = get('search').disabled = true;
   connectionStatus.textContent = token ? 'Closing Steel browser…' : 'Starting Steel browser…';
   try {
-    const response = await fetch(token ? '/api/disconnect' : '/api/connect', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ token }),
-    });
-    const session = await response.json();
-    if (!response.ok) {
-      throw new Error(session.error);
-    }
     if (token) {
-      token = undefined;
-      viewer.removeAttribute('src');
-      document.getElementById('session').hidden = true;
-      connect.textContent = 'Connect';
+      await request('disconnect', { token });
+      showSession();
       connectionStatus.textContent = 'Steel browser closed.';
     } else {
-      token = session.token;
-      viewer.src = session.viewer;
-      document.getElementById('session').hidden = false;
-      connect.textContent = 'Disconnect';
+      showSession(await request('connect', {}));
       connectionStatus.textContent = 'Steel browser ready.';
-      document.getElementById('session-title').focus();
+      get('session-title').focus();
     }
   } catch (error) {
     connectionStatus.textContent = error.message;
   } finally {
-    connect.disabled = false;
+    connect.disabled = !liveReady;
+    get('search').disabled = false;
   }
 });
 
@@ -130,8 +81,8 @@ function element(tag, text, className) {
   return node;
 }
 
-const saveSearch = document.getElementById('save-search');
-const savedSearches = document.getElementById('saved-searches');
+const saveSearch = get('save-search');
+const savedSearches = get('saved-searches');
 const savedSearchKey = 'watjobs.savedSearches.v1';
 let currentSearch;
 let history = [];
@@ -183,40 +134,66 @@ savedSearches.addEventListener('change', () => {
 });
 
 function renderJobs(jobs) {
-  const results = document.getElementById('results');
+  const results = get('results');
   results.replaceChildren();
   if (!jobs.length) {
-    results.append(element('p', 'No matching postings. Try broadening your preferences.'));
-    return;
+    const empty = element('div', '', 'empty');
+    empty.append(element('strong', 'No matching postings'), element('p', 'Try a different work term or duration, or broaden your optional filters.'));
+    results.append(empty);
   }
+  const visibleCount = 3;
+  const remaining = jobs.length - visibleCount;
   const moreResults = element('details', '', 'more-results');
-  if (jobs.length > 3) {
-    moreResults.append(element('summary', 'Show ' + (jobs.length - 3) + ' more jobs'));
+  if (remaining > 0) {
+    const toggle = element('summary');
+    const label = remaining + (remaining === 1 ? ' more job' : ' more jobs');
+    toggle.textContent = 'Show ' + label;
+    moreResults.addEventListener('toggle', () => {
+      toggle.textContent = moreResults.open ? 'Hide additional jobs' : 'Show ' + label;
+    });
+    moreResults.append(toggle);
   }
   for (const [index, job] of jobs.entries()) {
     const card = element('details', '', 'job');
-    const summary = element('summary', job.title, 'job-title');
-    card.append(summary);
-    const facts = element('dl', '', 'job-facts');
+    const summary = element('summary', '', 'job-summary');
+    summary.append(element('strong', job.title, 'job-title'));
+    const facts = element('span', '', 'job-facts');
     for (const [label, value] of [
-      ['Organization', job.company], ['City', job.location],
-      ['Level', job.level], ['Application Deadline', job.applicationDeadline],
+      ['Organization', job.company],
+      ['City', job.location],
+      ['Level', job.level],
+      ['Application Deadline', job.applicationDeadline],
     ]) {
-      const field = element('div');
-      field.append(element('dt', label), element('dd', value || 'Not listed'));
-      facts.append(field);
+      const fact = element('span', '', 'job-fact');
+      fact.append(element('strong', label), element('span', value || 'Not listed'));
+      facts.append(fact);
     }
-    card.append(facts);
-    if (job.jobId) {
-      card.append(element('p', 'WaterlooWorks Job ID ' + job.jobId));
+    summary.append(facts);
+    const source = [job.board === 'full' ? 'Full-Cycle Service' : job.board === 'direct' ? 'Employer-Student Direct' : '', job.jobId && 'WaterlooWorks Job ID ' + job.jobId].filter(Boolean);
+    if (source.length) {
+      summary.append(element('span', source.join(' · '), 'meta'));
     }
+    if (job.duration && job.tableOnly) {
+      summary.append(element('span', 'Posting details unverified', 'meta'));
+    }
+    card.append(summary);
     const details = element('div', '', 'job-details');
-    const metadata = [job.term, job.duration].filter(Boolean);
-    if (metadata.length) {
-      details.append(element('p', metadata.join(' · ')));
+    const meta = [job.term, job.duration, job.jobId && 'Job ID ' + job.jobId].filter(Boolean);
+    if (meta.length) {
+      details.append(element('p', meta.join(' · '), 'meta'));
     }
     if (job.description) {
       details.append(element('p', job.description, 'description'));
+    }
+    if (job.tableOnly) {
+      details.append(element('p', 'Listed on WaterlooWorks. Full description, skills, and application link were not verified.', 'description'));
+    }
+    if (job.matched.length) {
+      const tags = element('div', '', 'tags');
+      for (const keyword of job.matched) {
+        tags.append(element('span', keyword, 'tag'));
+      }
+      details.append(tags);
     }
     const application = element('section', '', 'application-details');
     application.append(element('h3', 'Application details'));
@@ -225,7 +202,9 @@ function renderJobs(jobs) {
       ...(job.applicationDetails ?? []),
     ];
     for (const { label, value } of applicationFields) {
-      if (!value) continue;
+      if (!value) {
+        continue;
+      }
       const field = element('p', '', 'description');
       field.append(element('strong', label + ' — '), document.createTextNode(value));
       application.append(field);
@@ -248,10 +227,53 @@ function renderJobs(jobs) {
     }
     details.append(application);
     card.append(details);
-    const target = index < 3 ? results : moreResults;
+    const target = index < visibleCount ? results : moreResults;
     target.append(card);
   }
-  if (jobs.length > 3) {
+  if (remaining > 0) {
     results.append(moreResults);
   }
 }
+
+form.addEventListener('submit', async event => {
+  event.preventDefault();
+  if (!token) {
+    status.textContent = 'Connect to a Steel browser and sign in to WaterlooWorks first.';
+    return;
+  }
+  connect.disabled = get('search').disabled = true;
+  saveSearch.disabled = savedSearches.disabled = true;
+  status.textContent = 'Searching WaterlooWorks…';
+  try {
+    const profile = Object.fromEntries(new FormData(form));
+    const { jobs, keywordFallback } =
+      await request('search', { profile, token, board: get('board').value });
+    showSession();
+    connectionStatus.textContent = 'Steel browser closed.';
+    const mode = get('mode');
+    if (mode) {
+      mode.textContent = 'WaterlooWorks';
+    }
+    renderJobs(jobs);
+    const summary = keywordFallback
+      ? 'No keyword matches. Showing ' + jobs.length + (jobs.length === 1 ? ' candidate' : ' candidates') + ' based on available filters.'
+      : jobs.length + (jobs.length === 1 ? ' result' : ' results');
+    status.textContent = summary;
+    const savedAt = new Date();
+    currentSearch = {
+      id: crypto.randomUUID(),
+      savedAt: savedAt.toISOString(),
+      label: [profile.roles || profile.term, savedAt.toLocaleString(), jobs.length + ' results'].join(' · '),
+      summary: status.textContent,
+      jobs,
+    };
+    savedSearches.value = '';
+  } catch (error) {
+    status.textContent = error.message;
+  } finally {
+    savedSearches.disabled = false;
+    saveSearch.disabled = !currentSearch?.jobs.length || history.some(search => search.id === currentSearch.id);
+    connect.disabled = !liveReady;
+    get('search').disabled = false;
+  }
+});

@@ -9,14 +9,17 @@
 </head>
 <body>
   <header class="top">
-    <nav class="bar" aria-label="Main navigation">
-      <a class="brand" href="/">WATjobs</a>
-      <a href="https://waterlooworks.uwaterloo.ca/">WaterlooWorks</a>
-    </nav>
+    <div class="wrap bar">
+      <a class="brand" href="/"><span class="mark" aria-hidden="true">W</span> WATjobs</a>
+      <a class="external" href="https://waterlooworks.uwaterloo.ca/" target="_blank" rel="noopener noreferrer">WaterlooWorks <span aria-hidden="true">↗</span></a>
+    </div>
   </header>
-  <main>
-    <h1>WATjobs</h1>
-    <p>WaterlooWorks co-op search helper</p>
+  <main class="wrap">
+    <section class="intro">
+      <h1>WaterlooWorks Searching Assistant</h1>
+      <p>Connect to a Steel brower, sign in to WaterlooWorks, and fill out your search profile. Spectate the browing and wait for the job matches!</p>
+      <p>*Job matches may include unverified information. Please confirm with WaterlooWorks using the job id</p>
+    </section>
     <div class="source">
       <div><strong>WaterlooWorks</strong><p id="source-note" role="status">Checking live search availability…</p></div>
       <button class="secondary" type="button" id="connect" disabled>Connect</button>
@@ -36,54 +39,49 @@
       </div>
       <iframe id="viewer" title="Interactive Steel browser for WaterlooWorks" allow="autoplay; fullscreen" referrerpolicy="no-referrer"></iframe>
     </section>
-    <section aria-labelledby="preferences-heading">
-      <h2 id="preferences-heading">Job Preferences</h2>
-      <form>
-        <p>
-          <label for="term">Work term (required)</label>
-          <select id="term" name="term" required>
+    <div class="workspace">
+      <aside class="panel">
+        <h2>Job Preferences</h2>
+        <form id="profile">
+          <div class="pair">
+            <label>Work term<select name="term" required></select></label>
+            <label>Duration<select name="duration" required><option>4 months</option><option>8 months</option></select></label>
+          </div>
+          <label>Program<input name="program" placeholder="e.g. Computer Engineering" maxlength="450"></label>
+          <label>Job Title<input name="roles" placeholder="e.g. Software Engineer" maxlength="450"></label>
+          <div class="pair">
+            <label>City<input name="location" placeholder="e.g. Vancouver" maxlength="450"></label>
+            <label>Job Level
+              <select name="level">
+                <option value="">Any level</option>
+                <option>Junior</option>
+                <option>Intermediate</option>
+                <option>Senior</option>
+              </select>
+            </label>
+          </div>
+          <label>Skills<textarea name="skills" placeholder="e.g. Python, C++, teamwork" maxlength="450" rows="2"></textarea></label>
+          <p class="hint">Separate text with commas</p>
+          <button class="primary" id="search">Find matches <span aria-hidden="true">→</span></button>
+        </form>
+      </aside>
+      <section class="results" aria-labelledby="results-title">
+        <div class="results-heading">
+          <h2 id="results-title">Job Matches</h2>
+          <button type="button" class="secondary" id="save-search" disabled>Save search</button>
+        </div>
+        <label>Saved searches
+          <select id="saved-searches">
+            <option value="">Choose a saved search</option>
           </select>
-        </p>
-        <p>
-          <label for="duration">Duration (required)</label>
-          <select id="duration" name="duration" required>
-            <option value="">Choose a duration</option>
-            <option>4 months</option>
-            <option>8 months</option>
-          </select>
-        </p>
-        <p><label for="program">Program</label> <input id="program" name="program" maxlength="450"></p>
-        <p><label for="roles">Job title</label> <input id="roles" name="roles" maxlength="450"></p>
-        <p><label for="location">City</label> <input id="location" name="location" maxlength="450"></p>
-        <p>
-          <label for="level">Job level</label>
-          <select id="level" name="level">
-            <option value="">Any level</option>
-            <option>Junior</option>
-            <option>Intermediate</option>
-            <option>Senior</option>
-          </select>
-        </p>
-        <p><label for="skills">Skills</label> <textarea id="skills" name="skills" maxlength="450" rows="2"></textarea></p>
-        <button type="submit">Check preferences</button>
-        <p id="form-status" role="status"></p>
-      </form>
-    </section>
-    <section class="results" aria-labelledby="results-title">
-      <div class="results-heading">
-        <h2 id="results-title">Job Matches</h2>
-        <button type="button" id="save-search" disabled>Save search</button>
-      </div>
-      <label>Saved searches
-        <select id="saved-searches">
-          <option value="">Choose a saved search</option>
-        </select>
-      </label>
-      <p id="status" role="status"></p>
-      <div id="results">
-        <p>Your matches will appear here after searching WaterlooWorks.</p>
-      </div>
-    </section>
+        </label>
+        <p id="status" role="status" aria-live="polite"></p>
+        <div id="results">
+          <div class="empty"><strong>Your matches will appear here</strong><p>Fill out your search profile and select Find matches.</p></div>
+        </div>
+      </section>
+    </div>
+    <footer>Developed by Maxwell Qin (Computer Engineering '31 @ University of Waterloo)</footer>
   </main>
 </body>
 </html>
