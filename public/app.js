@@ -41,7 +41,9 @@ form.addEventListener('submit', async event => {
       throw new Error(result.error);
     }
     renderJobs(result.jobs);
-    status.textContent = result.jobs.length + (result.jobs.length === 1 ? ' result' : ' results');
+    status.textContent = result.keywordFallback
+      ? 'No keyword matches. Showing ' + result.jobs.length + (result.jobs.length === 1 ? ' candidate' : ' candidates') + ' based on available filters.'
+      : result.jobs.length + (result.jobs.length === 1 ? ' result' : ' results');
     token = undefined;
     viewer.removeAttribute('src');
     document.getElementById('session').hidden = true;
