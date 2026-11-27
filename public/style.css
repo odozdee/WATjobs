@@ -194,3 +194,19 @@ button:disabled {
 .application-details h3 {
   margin-top: 1rem;
 }
+
+.results-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+#status {
+  margin: 10px 0 9px;
+}
+
+#status:empty {
+  display: none;
+}
