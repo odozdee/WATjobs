@@ -1,4 +1,4 @@
-import { matchesLocationAndLevel, rank } from './search.mjs';
+import { rank } from './search.mjs';
 
 const scanBudgetSeconds = 180;
 const scanTimeoutMessage = 'Reached the ' + scanBudgetSeconds + '-second scan limit';
@@ -239,7 +239,7 @@ export async function readBoard(context, profile, board = 'direct', reportProgre
           continue;
         }
         const months = readMonths(entry.duration);
-        if ((months.length && !months.includes(profile.duration)) || !matchesLocationAndLevel(entry, profile)) {
+        if (months.length && !months.includes(profile.duration)) {
           continue;
         }
         const key = jobKey(entry);
@@ -271,11 +271,8 @@ export async function readBoard(context, profile, board = 'direct', reportProgre
       reportProgress(checked, seenPages.size, 'details', targets.size);
       let reopened = false;
       const forTerm = entries.filter(entry =>
-        entry.term?.replace(/\s*-\s*/, ' - ').toLowerCase() === profile.term.toLowerCase() &&
-        matchesLocationAndLevel(entry, {
-          location: entry.location ? profile.location : '',
-          level: entry.level ? profile.level : '',
-        })).filter(entry => targets.has(jobKey(entry)))
+        entry.term?.replace(/\s*-\s*/, ' - ').toLowerCase() === profile.term.toLowerCase())
+        .filter(entry => targets.has(jobKey(entry)))
         .sort((a, b) => targets.get(jobKey(a)) - targets.get(jobKey(b)));
       for (const entry of forTerm) {
         if (Date.now() >= scanDeadline) {
@@ -469,13 +466,8 @@ export async function readBoard(context, profile, board = 'direct', reportProgre
             if ((profile.location && !job.location) || (profile.level && !job.level)) {
               missingCityOrLevel++;
             }
-            else if (matchesLocationAndLevel(job, profile)) {
-              jobs.push(job);
-              candidates.delete(key);
-            } else {
-              differentLocationOrLevel++;
-              candidates.delete(key);
-            }
+            jobs.push(job);
+            candidates.delete(key);
           }
         } catch {
           skipped++;
