@@ -1,5 +1,5 @@
 import { origin, readBoard } from './waterlooworks.mjs';
-import { profileFrom, rank, summarizePosting } from './search.mjs';
+import { profileFrom, rank, summarizePosting, expandProfileKeywords } from './search.mjs';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
@@ -204,7 +204,10 @@ export const server = createServer(async (request, response) => {
       const profile = profileFrom(body.profile);
       session.busy = true;
       ownsSearch = true;
-      const result = await readBoard(session.context, profile, body.board);
+      const [result] = await Promise.all([
+        readBoard(session.context, profile, body.board),
+        expandProfileKeywords(profile),
+      ]);
       const ranked = rank(result.jobs, profile, true);
       const keywordFallback = ranked.length === 0 && result.jobs.length > 0;
       const all = rank(result.jobs, profile, true, { includeUnmatched: true });
@@ -217,6 +220,7 @@ export const server = createServer(async (request, response) => {
         ...result,
         jobs: jobs.map(job => ({ ...job, description: summarizePosting(job.description || '') })),
         keywordFallback,
+        ai: profile.ai,
       }));
     } catch (error) {
       const message = error instanceof SyntaxError ? 'Invalid request data.'
